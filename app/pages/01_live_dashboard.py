@@ -1,27 +1,40 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from pathlib import Path
+import sys
+
+# Ensure project root imports work
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.components.theme import inject_global_styles
 
 st.set_page_config(page_title="GaitIQ - Live Dashboard", layout="wide")
+inject_global_styles()
+
 st.title("Live Dashboard")
 st.caption("Upload IMU CSV and inspect gait signals")
 
 required_cols = [
-    "timestamp","ax","ay","az","gx","gy","gz","roll","pitch","yaw","terrain_label"
+    "timestamp", "ax", "ay", "az",
+    "gx", "gy", "gz",
+    "roll", "pitch", "yaw",
+    "terrain_label"
 ]
 
 uploaded = st.file_uploader("Upload session CSV", type=["csv"])
 
-df = None
 if uploaded is not None:
     df = pd.read_csv(uploaded)
     st.success("CSV uploaded successfully.")
 else:
-    # fallback to synthetic example if available
-    try:
-        df = pd.read_csv("data/synthetic/session_synthetic_v1.csv")
-        st.info("Using local synthetic file: data/synthetic/session_synthetic_v1.csv")
-    except Exception:
+    sample_path = ROOT / "data" / "synthetic" / "session_synthetic_v1.csv"
+    if sample_path.exists():
+        df = pd.read_csv(sample_path)
+        st.info(f"Using local synthetic file: {sample_path}")
+    else:
         st.warning("Upload a CSV to continue.")
         st.stop()
 
@@ -36,9 +49,12 @@ samples = len(df)
 terrains = df["terrain_label"].nunique()
 
 c1, c2, c3 = st.columns(3)
-c1.metric("Samples", f"{samples}")
-c2.metric("Duration (s)", f"{duration_sec:.1f}")
-c3.metric("Terrain classes", f"{terrains}")
+with c1:
+    st.markdown('<div class="kpi"><h4>Samples</h4><h2>{}</h2><p>Total rows ingested</p></div>'.format(samples), unsafe_allow_html=True)
+with c2:
+    st.markdown('<div class="kpi"><h4>Duration</h4><h2>{:.1f}s</h2><p>Session length</p></div>'.format(duration_sec), unsafe_allow_html=True)
+with c3:
+    st.markdown('<div class="kpi"><h4>Terrain Classes</h4><h2>{}</h2><p>Unique labels</p></div>'.format(terrains), unsafe_allow_html=True)
 
 st.markdown("### Signal Viewer")
 signal_group = st.radio("Choose signal group", ["Acceleration", "Gyroscope", "Orientation"], horizontal=True)
@@ -65,15 +81,35 @@ fig = px.line(
     x="time_s",
     y="value",
     color="signal",
-    title=f"{signal_group} vs Time"
+    title=f"{signal_group} vs Time",
 )
+fig.update_layout(
+    template="plotly_dark",
+    transition={"duration": 500},
+    hovermode="x unified",
+    legend_title_text="Signal",
+)
+
+st.markdown('<div class="section">', unsafe_allow_html=True)
 st.plotly_chart(fig, width="stretch")
+st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("### Terrain Label Distribution")
 dist = df["terrain_label"].value_counts().reset_index()
 dist.columns = ["terrain_label", "count"]
 bar = px.bar(dist, x="terrain_label", y="count", title="Samples per Terrain")
+bar.update_layout(
+    template="plotly_dark",
+    transition={"duration": 500},
+    xaxis_title="Terrain",
+    yaxis_title="Count",
+)
+
+st.markdown('<div class="section">', unsafe_allow_html=True)
 st.plotly_chart(bar, width="stretch")
+st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("### Preview")
+st.markdown('<div class="section">', unsafe_allow_html=True)
 st.dataframe(df.head(20), width="stretch")
+st.markdown('</div>', unsafe_allow_html=True)

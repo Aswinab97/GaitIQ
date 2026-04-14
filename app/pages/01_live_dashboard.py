@@ -67,13 +67,13 @@ fig = px.line(
     color="signal",
     title=f"{signal_group} vs Time"
 )
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 st.markdown("### Terrain Label Distribution")
 dist = df["terrain_label"].value_counts().reset_index()
 dist.columns = ["terrain_label", "count"]
 bar = px.bar(dist, x="terrain_label", y="count", title="Samples per Terrain")
-st.plotly_chart(bar, use_container_width=True)
+st.plotly_chart(bar, width="stretch")
 
 st.markdown("### Preview")
-st.dataframe(df.head(20), use_container_width=True)
+st.dataframe(df.head(20), width="stretch")

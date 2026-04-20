@@ -10,9 +10,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.components.theme import inject_global_styles
+from app.components.layout import render_sidebar
 
 st.set_page_config(page_title="GaitIQ - Live Dashboard", layout="wide")
 inject_global_styles()
+render_sidebar()
 
 st.title("Live Dashboard")
 st.caption("Upload IMU CSV and inspect gait signals")
@@ -50,11 +52,11 @@ terrains = df["terrain_label"].nunique()
 
 c1, c2, c3 = st.columns(3)
 with c1:
-    st.markdown('<div class="kpi"><h4>Samples</h4><h2>{}</h2><p>Total rows ingested</p></div>'.format(samples), unsafe_allow_html=True)
+    st.markdown(f'<div class="kpi"><h4>Samples</h4><h2>{samples}</h2><p>Total rows ingested</p></div>', unsafe_allow_html=True)
 with c2:
-    st.markdown('<div class="kpi"><h4>Duration</h4><h2>{:.1f}s</h2><p>Session length</p></div>'.format(duration_sec), unsafe_allow_html=True)
+    st.markdown(f'<div class="kpi"><h4>Duration</h4><h2>{duration_sec:.1f}s</h2><p>Session length</p></div>', unsafe_allow_html=True)
 with c3:
-    st.markdown('<div class="kpi"><h4>Terrain Classes</h4><h2>{}</h2><p>Unique labels</p></div>'.format(terrains), unsafe_allow_html=True)
+    st.markdown(f'<div class="kpi"><h4>Terrain Classes</h4><h2>{terrains}</h2><p>Unique labels</p></div>', unsafe_allow_html=True)
 
 st.markdown("### Signal Viewer")
 signal_group = st.radio("Choose signal group", ["Acceleration", "Gyroscope", "Orientation"], horizontal=True)
@@ -91,7 +93,7 @@ fig.update_layout(
 )
 
 st.markdown('<div class="section">', unsafe_allow_html=True)
-st.plotly_chart(fig, width="stretch")
+st.plotly_chart(fig, width='stretch')
 st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("### Terrain Label Distribution")
@@ -106,10 +108,10 @@ bar.update_layout(
 )
 
 st.markdown('<div class="section">', unsafe_allow_html=True)
-st.plotly_chart(bar, width="stretch")
+st.plotly_chart(bar, width='stretch')
 st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("### Preview")
 st.markdown('<div class="section">', unsafe_allow_html=True)
-st.dataframe(df.head(20), width="stretch")
+st.dataframe(df.head(20), width='stretch')
 st.markdown('</div>', unsafe_allow_html=True)

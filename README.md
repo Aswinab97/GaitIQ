@@ -1,132 +1,132 @@
-# GaitIQ
-**Smart prosthetic gait & fall‑risk analyzer** · Engineering prototype · v0.1.0‑alpha  
-*Research prototype. Not a medical device. Not FDA approved.*
+# GaitIQ  
+**Smart prosthetic gait & fall-risk analyzer · Engineering prototype · v0.1.0-alpha**
+
+GaitIQ is an end-to-end prototype for:
+- Collecting IMU gait data from ESP32 + BNO055
+- Streaming live motion packets over UDP
+- Running real-time gait inference in a Streamlit dashboard
+- Training a classical ML model for terrain/activity classification
 
 ---
 
-## What this is
-GaitIQ is a wearable AI system that collects IMU motion data from a prosthetic limb, detects terrain transitions, and estimates fall‑risk signals using explainable machine learning — with a live Streamlit dashboard for clinics and users.
+## 1) Quickstart (5 min)
 
----
+### Prerequisites
+- Python 3.11+ (recommended: 3.11/3.12)
+- pip
+- Git
+- (Optional) ESP32 + BNO055 hardware for live streaming
 
-## Problem
-Above‑knee prosthesis users often experience instability during terrain changes (flat → slope → stairs). Clinics only see short hallway tests and rely on subjective feedback. There is no objective, real‑world data to support tuning.
-
----
-
-## Solution (MVP)
-A low‑cost IMU data logger + ML pipeline that:
-- captures real‑world gait signals
-- detects terrain transitions and instability events
-- summarizes sessions into clear reports for prosthetists
-
----
-
-## Project Phases (2‑Week Sprint)
-**Phase 1 (Now): App + Data pipeline (no hardware)**
-- Streamlit dashboard with CSV upload
-- Synthetic data generator
-- Feature extraction + baseline classifier
-
-**Phase 2 (When hardware arrives):**
-- ESP32‑S3 + BNO055 bring‑up
-- CSV session logging
-- Integrate real data into pipeline
-
-**Phase 3+:**
-- Improved terrain transition detection
-- Fall‑risk model
-- Explainability layer (SHAP)
-
----
-
-## Repo Structure
-```
-gaitiq/
-  firmware/
-    phase1_bringup.ino
-    phase2_stable_capture.ino
-    phase3_wifi_stream.ino
-
-  data/
-    raw/
-    processed/
-    synthetic/
-    generate_synthetic.py
-    .gitkeep
-
-  app/
-    main.py
-    pages/
-      01_live_dashboard.py
-      02_session_history.py
-      03_gait_analysis.py
-    components/
-      risk_indicator.py
-      gait_chart.py
-      terrain_badge.py
-
-  ml/
-    features.py
-    terrain_classifier.py
-    fall_risk_model.py
-    transition_detector.py
-    models/
-
-  receiver/
-    socket_receiver.py
-    session_logger.py
-
-  docs/
-    architecture.md
-    wiring_diagram.md
-
-  requirements.txt
-  .gitignore
-```
-
----
-
-## Stack
-- **Hardware:** ESP32‑S3 + Adafruit BNO055 IMU
-- **Data:** CSV session logs
-- **App:** Streamlit
-- **ML:** scikit‑learn (baseline), SHAP (phase 3+)
-
----
-
-## CSV Data Format (locked)
-```
-timestamp,ax,ay,az,gx,gy,gz,roll,pitch,yaw,terrain_label
-1700000012,0.12,0.02,9.78,0.01,0.03,0.02,1.2,0.5,89.0,flat
-```
-
----
-
-## Quick Start (App)
+### Setup
 ```bash
+git clone https://github.com/Aswinab97/GaitIQ.git
+cd GaitIQ
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install --upgrade pip
 pip install -r requirements.txt
-streamlit run app/main.py
+```
+
+### Run the app
+```bash
+python -m streamlit run app/main.py
+```
+
+Open the local URL shown in terminal (usually `http://localhost:8501`).
+
+---
+
+## 2) Train model from real data
+
+Place labeled CSV session files in:
+- `data/raw/`
+
+Then run:
+```bash
+python ml/train_real_classifier.py
+```
+
+This generates model artifacts in:
+- `ml/models/`
+
+> Note: model binaries (`*.joblib`) are ignored by git by design.
+
+---
+
+## 3) Live UDP inference (ESP32)
+
+1. Open app page: **Live UDP Inference**
+2. Set:
+   - UDP bind IP: `0.0.0.0`
+   - UDP port: e.g. `4210`
+3. Click **Start Live Inference**
+4. Ensure ESP32 firmware sends UDP to your laptop IP + same port
+
+Example receiver target in firmware:
+```cpp
+IPAddress receiverIP(192, 168, 2, 116);  // your laptop IP
+const int receiverPort = 4210;
+udp.beginPacket(receiverIP, receiverPort);
+udp.print(payload);
+udp.endPacket();
 ```
 
 ---
 
-## Status
-**Phase 1 — App + data pipeline in progress**
+## 4) Project structure
+
+```text
+GaitIQ/
+├── app/                  # Streamlit app
+│   ├── main.py
+│   ├── pages/
+│   └── components/
+├── ml/                   # Feature engineering + training scripts
+│   └── models/           # Local model artifacts (gitignored)
+├── firmware/             # ESP32 sketches
+├── receiver/             # UDP/socket logging utilities
+├── data/
+│   ├── raw/              # Local raw sessions (gitignored)
+│   ├── processed/
+│   └── synthetic/
+├── docs/
+├── requirements.txt
+└── Dockerfile
+```
 
 ---
 
-## Team Workflow
-- **main** = stable only  
-- **develop** = active work  
-- **feature/GIQ-XXX** = one task per branch  
-- Commit format: `type(scope): message [GIQ-XXX]`
+## 5) Reproducibility notes
 
-**Types:** feat | fix | data | firmware | docs | refactor | test  
-**Scopes:** app | ml | hw | data | docs  
+- Use the same Python environment for training + inference.
+- If model/scikit-learn versions differ, retrain model in current environment.
+- Recommended run command:
+```bash
+python -m streamlit run app/main.py
+```
 
 ---
 
-## Notes
-This is an engineering prototype intended for academic evaluation and research demonstration only.  
-Not intended for medical use.
+## 6) Known limitations (v0.1.0-alpha)
+
+- Single-user local prototype (not production deployment)
+- Basic model validation only
+- No cloud persistence/API yet
+- Live UDP depends on local network stability and correct IP/port routing
+
+---
+
+## 7) Roadmap (next)
+
+- Add CI (lint + tests)
+- Add unit tests for feature pipeline and model loading
+- Add confidence smoothing / majority vote in live inference
+- Add experiment tracking and model report
+
+---
+
+## 8) License
+
+MIT License — see [LICENSE](LICENSE).

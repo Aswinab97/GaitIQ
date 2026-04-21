@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import socket
 import time
 import joblib
@@ -15,6 +14,13 @@ if str(ROOT) not in sys.path:
 
 from app.components.theme import inject_global_styles
 from app.components.layout import render_sidebar
+from core.session.repository import (
+    init_db,
+    create_live_session,
+    end_live_session,
+    add_prediction,
+    add_event,
+)
 
 st.set_page_config(page_title="GaitIQ - Live UDP Inference", layout="wide")
 inject_global_styles()
@@ -22,6 +28,8 @@ render_sidebar()
 
 st.title("Live UDP Inference")
 st.caption("Receive IMU UDP stream and predict gait activity in real time")
+
+init_db()
 
 REAL_MODEL_PATH = ROOT / "ml" / "models" / "terrain_rf_real.joblib"
 REAL_LABEL_PATH = ROOT / "ml" / "models" / "label_encoder_real.joblib"
@@ -40,7 +48,7 @@ c1, c2, c3, c4 = st.columns(4)
 with c1:
     udp_ip = st.text_input("UDP bind IP", "0.0.0.0")
 with c2:
-    udp_port = st.number_input("UDP Port", min_value=1, max_value=65535, value=4210, step=1)
+    udp_port = st.number_input("UDP Port", min_value=1, max_value=65535, value=5005, step=1)
 with c3:
     window_size = st.number_input("Feature window size", min_value=5, max_value=200, value=20, step=1)
 with c4:
@@ -49,23 +57,46 @@ with c4:
 start_btn = st.button("Start Live Inference")
 stop_btn = st.button("Stop")
 
+# ---- Session state ----
 if "running" not in st.session_state:
     st.session_state.running = False
 if "rows" not in st.session_state:
     st.session_state.rows = deque(maxlen=3000)
 if "pred_hist" not in st.session_state:
     st.session_state.pred_hist = deque(maxlen=200)
+if "udp_sock" not in st.session_state:
+    st.session_state.udp_sock = None
+if "udp_target" not in st.session_state:
+    st.session_state.udp_target = None
+if "pkt_count" not in st.session_state:
+    st.session_state.pkt_count = 0
+if "t0" not in st.session_state:
+    st.session_state.t0 = None
+if "live_session_id" not in st.session_state:
+    st.session_state.live_session_id = None
+if "last_pred_label" not in st.session_state:
+    st.session_state.last_pred_label = None
 
-if start_btn:
-    st.session_state.running = True
-if stop_btn:
-    st.session_state.running = False
+def close_udp_socket():
+    if st.session_state.udp_sock is not None:
+        try:
+            st.session_state.udp_sock.close()
+        except Exception:
+            pass
+    st.session_state.udp_sock = None
+    st.session_state.udp_target = None
+
+def open_udp_socket(ip: str, port: int):
+    close_udp_socket()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((ip, int(port)))
+    sock.settimeout(0.05)
+    st.session_state.udp_sock = sock
+    st.session_state.udp_target = (ip, int(port))
 
 def parse_udp_line(line: str):
     p = [x.strip() for x in line.split(",")]
-    # accepted formats:
-    # 3 cols: heading,roll,pitch
-    # >=10 cols: time_ms,heading,roll,pitch,ax,ay,az,gx,gy,gz
     if len(p) == 3:
         return {
             "heading": float(p[0]), "roll": float(p[1]), "pitch": float(p[2]),
@@ -83,19 +114,57 @@ def build_feature_row(df_tail: pd.DataFrame):
     base = ["heading","roll","pitch","ax","ay","az","gx","gy","gz"]
     feat = {}
 
-    # raw latest values
     for c in base:
         feat[c] = float(df_tail[c].iloc[-1])
 
-    # rolling mean/std (same logic as train script)
     for c in base:
         feat[f"{c}_mean"] = float(df_tail[c].mean())
         feat[f"{c}_std"] = float(df_tail[c].std(ddof=0) if len(df_tail) > 1 else 0.0)
 
-    # Ensure exact feature order expected by model
     row = {c: feat.get(c, 0.0) for c in feature_cols}
     return pd.DataFrame([row], columns=feature_cols)
 
+# ---- Start/Stop actions ----
+if start_btn:
+    target = (udp_ip, int(udp_port))
+    need_rebind = (
+        (not st.session_state.running)
+        or (st.session_state.udp_target != target)
+        or (st.session_state.udp_sock is None)
+    )
+    if need_rebind:
+        try:
+            open_udp_socket(udp_ip, int(udp_port))
+            st.session_state.pkt_count = 0
+            st.session_state.t0 = time.time()
+            st.session_state.last_pred_label = None
+
+            st.session_state.live_session_id = create_live_session(
+                device_id=f"{udp_ip}:{udp_port}",
+                sample_rate_hz=None,
+                model_version="terrain_rf_real.joblib",
+                notes="Live UDP inference session"
+            )
+            add_event(
+                session_id=st.session_state.live_session_id,
+                event_type="session_started",
+                payload_json={"udp_ip": udp_ip, "udp_port": int(udp_port)}
+            )
+        except OSError as e:
+            st.error(f"Could not bind UDP socket on {udp_ip}:{udp_port} -> {e}")
+            st.session_state.running = False
+
+    st.session_state.running = st.session_state.udp_sock is not None
+
+if stop_btn:
+    st.session_state.running = False
+    close_udp_socket()
+    if st.session_state.live_session_id is not None:
+        add_event(st.session_state.live_session_id, "session_stopped", {})
+        end_live_session(st.session_state.live_session_id)
+        st.session_state.live_session_id = None
+
+# ---- UI placeholders ----
 status_box = st.empty()
 k1, k2, k3 = st.columns(3)
 pred_box = k1.empty()
@@ -104,67 +173,82 @@ rate_box = k3.empty()
 chart_box = st.empty()
 table_box = st.empty()
 
-if st.session_state.running:
-    status_box.success(f"Listening UDP on {udp_ip}:{udp_port}")
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((udp_ip, int(udp_port)))
-    sock.settimeout(0.1)
+if st.session_state.running and st.session_state.udp_sock is not None:
+    ip, port = st.session_state.udp_target
+    status_box.success(f"Listening UDP on {ip}:{port}")
 
-    t0 = time.time()
-    pkt_count = 0
-    last_ui = 0.0
+    for _ in range(300):
+        try:
+            data, _ = st.session_state.udp_sock.recvfrom(512)
+            line = data.decode(errors="ignore").strip()
+            row = parse_udp_line(line)
+            if row is None:
+                continue
 
-    try:
-        while st.session_state.running:
-            try:
-                data, _ = sock.recvfrom(512)
-                line = data.decode(errors="ignore").strip()
-                row = parse_udp_line(line)
-                if row is None:
-                    continue
+            row["pc_time"] = pd.Timestamp.now()
+            st.session_state.rows.append(row)
+            st.session_state.pkt_count += 1
 
-                row["pc_time"] = pd.Timestamp.now()
-                st.session_state.rows.append(row)
-                pkt_count += 1
+            if len(st.session_state.rows) >= int(window_size):
+                df_live = pd.DataFrame(st.session_state.rows)
+                tail = df_live.tail(int(window_size)).copy()
+                x = build_feature_row(tail)
 
-                if len(st.session_state.rows) >= int(window_size):
-                    df_live = pd.DataFrame(st.session_state.rows)
-                    tail = df_live.tail(int(window_size)).copy()
+                pred_id = model.predict(x.values)[0]
+                pred_label = label_encoder.inverse_transform([pred_id])[0]
+                pred_time = pd.Timestamp.now()
 
-                    x = build_feature_row(tail)
-                    pred_id = model.predict(x.values)[0]
-                    pred_label = label_encoder.inverse_transform([pred_id])[0]
-                    st.session_state.pred_hist.append(
-                        {"time": pd.Timestamp.now(), "predicted": pred_label}
+                st.session_state.pred_hist.append({"time": pred_time, "predicted": pred_label})
+
+                if st.session_state.live_session_id is not None:
+                    add_prediction(
+                        session_id=st.session_state.live_session_id,
+                        predicted_terrain=str(pred_label),
+                        confidence=None,
+                        fall_risk_score=None,
+                        meta={"window_size": int(window_size)}
                     )
 
-                now = time.time()
-                if (now - last_ui) * 1000 >= int(refresh_ms):
-                    elapsed = max(now - t0, 1e-6)
-                    hz = pkt_count / elapsed
+                    if st.session_state.last_pred_label is not None and st.session_state.last_pred_label != pred_label:
+                        add_event(
+                            session_id=st.session_state.live_session_id,
+                            event_type="terrain_transition",
+                            payload_json={
+                                "from": str(st.session_state.last_pred_label),
+                                "to": str(pred_label),
+                                "at": str(pred_time),
+                            },
+                        )
 
-                    latest_pred = st.session_state.pred_hist[-1]["predicted"] if st.session_state.pred_hist else "N/A"
-                    pred_box.metric("Current Prediction", latest_pred)
-                    count_box.metric("Packets Received", pkt_count)
-                    rate_box.metric("Rate (Hz)", f"{hz:.1f}")
+                st.session_state.last_pred_label = pred_label
 
-                    if st.session_state.pred_hist:
-                        hist_df = pd.DataFrame(st.session_state.pred_hist)
-                        dist = hist_df["predicted"].value_counts().rename_axis("class").reset_index(name="count")
-                        chart = pd.DataFrame(dist)
-                        chart_box.bar_chart(chart.set_index("class"))
+        except socket.timeout:
+            break
+        except Exception as e:
+            status_box.error(f"Runtime error: {e}")
+            st.session_state.running = False
+            close_udp_socket()
+            if st.session_state.live_session_id is not None:
+                add_event(st.session_state.live_session_id, "runtime_error", {"error": str(e)})
+                end_live_session(st.session_state.live_session_id)
+                st.session_state.live_session_id = None
+            break
 
-                        table_box.dataframe(hist_df.tail(20), width="stretch")
+    elapsed = max(time.time() - (st.session_state.t0 or time.time()), 1e-6)
+    hz = st.session_state.pkt_count / elapsed
+    latest_pred = st.session_state.pred_hist[-1]["predicted"] if st.session_state.pred_hist else "N/A"
 
-                    last_ui = now
+    pred_box.metric("Current Prediction", latest_pred)
+    count_box.metric("Packets Received", st.session_state.pkt_count)
+    rate_box.metric("Rate (Hz)", f"{hz:.1f}")
 
-            except socket.timeout:
-                pass
+    if st.session_state.pred_hist:
+        hist_df = pd.DataFrame(st.session_state.pred_hist)
+        dist = hist_df["predicted"].value_counts().rename_axis("class").reset_index(name="count")
+        chart_box.bar_chart(dist.set_index("class"))
+        table_box.dataframe(hist_df.tail(20), width="stretch")
 
-    except Exception as e:
-        status_box.error(f"Runtime error: {e}")
-    finally:
-        sock.close()
-        status_box.info("Stopped.")
+    time.sleep(max(int(refresh_ms), 100) / 1000.0)
+    st.rerun()
 else:
     status_box.info("Click 'Start Live Inference' to begin.")
